@@ -1,0 +1,16 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "publisher": "WheresTheApp",
+    "shortDescription": "ChatMix pre SteelSeries slúchadlá bez Sonaru",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "./installer-hooks.nsh"
+      }
+    }
+  }
+}

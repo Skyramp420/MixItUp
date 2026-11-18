@@ -1,0 +1,64 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Vydať verziu (napr. 0.2.0) – prázdne = len build'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  # verzia na vydanie: z tagu v* alebo z ručného spustenia
+  RELEASE_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.version }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verzia
+        if: env.RELEASE_VERSION != ''
+        shell: pwsh
+        run: |
+          $v = "$env:RELEASE_VERSION".TrimStart('v')
+          $c = Get-Content app/src-tauri/tauri.conf.json -Raw
+          ($c -replace '"version":\s*"[^"]+"', "`"version`": `"$v`"") | Set-Content app/src-tauri/tauri.conf.json -NoNewline
+          $t = Get-Content app/src-tauri/Cargo.toml -Raw
+          ([regex]'(?m)^version = "[^"]+"').Replace($t, "version = `"$v`"", 1) | Set-Content app/src-tauri/Cargo.toml -NoNewline
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Testy
+        working-directory: app/src-tauri
+        run: cargo test --release
+
+      - name: Build appky + inštalátor
+        working-directory: app/src-tauri
+        run: npx --yes @tauri-apps/cli@2 build --bundles nsis --config tauri.release.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MixItUp-setup
+          path: app/src-tauri/target/release/bundle/nsis/*-setup.exe
+
+      - name: Release
+        if: env.RELEASE_VERSION != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v" + "$env:RELEASE_VERSION".TrimStart('v')
+          $exe = Get-ChildItem app/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          gh release create $tag $exe.FullName --target "${{ github.sha }}" --title "MixItUp $tag" --generate-notes
