@@ -44,7 +44,9 @@ fn valid_mix(game: i32, chat: i32) -> bool {
 }
 
 /// Spracuje jeden HID report. Vráti true, ak sa stav zmenil.
-fn parse(st: &mut HeadsetState, fam: Family, raw: &[u8]) -> bool {
+/// `status_mix` = brať polohu kolieska aj zo stavového paketu (len keď koliesko chvíľu neposlalo event,
+/// inak by starší stav vracal knob späť a slider by skákal).
+fn parse(st: &mut HeadsetState, fam: Family, raw: &[u8], status_mix: bool) -> bool {
     let d = if raw.len() > 1 && raw[0] == 0 { &raw[1..] } else { raw };
     if d.len() < 3 { return false; }
     let before = st.clone();
@@ -60,7 +62,7 @@ fn parse(st: &mut HeadsetState, fam: Family, raw: &[u8]) -> bool {
                     if d[3] <= 100 { st.battery = d[3] as i32; }
                     st.charging = d[4] == 0x01;
                     let (g, c) = (d[5] as i32, d[6] as i32);
-                    if valid_mix(g, c) { st.game = g; st.chat = c; }
+                    if status_mix && valid_mix(g, c) { st.game = g; st.chat = c; }
                 }
             }
             Family::Nova7 if d.len() >= 6 => {
@@ -69,7 +71,7 @@ fn parse(st: &mut HeadsetState, fam: Family, raw: &[u8]) -> bool {
                     if d[2] <= 4 { st.battery = d[2] as i32 * 25; }
                     st.charging = d[3] == 0x01;
                     let (g, c) = (d[4] as i32, d[5] as i32);
-                    if valid_mix(g, c) { st.game = g; st.chat = c; }
+                    if status_mix && valid_mix(g, c) { st.game = g; st.chat = c; }
                 }
             }
             _ => {}
@@ -131,6 +133,7 @@ pub fn run(stop: Arc<AtomicBool>, mut on_change: impl FnMut(&HeadsetState)) {
 
         let mut buf = [0u8; 65];
         let mut last_poll = Instant::now() - Duration::from_secs(10);
+        let mut last_event: Option<Instant> = None;
         let mut dead = false;
         while !stop.load(Ordering::Relaxed) && !dead {
             if last_poll.elapsed() >= Duration::from_secs(2) {
@@ -146,7 +149,11 @@ pub fn run(stop: Arc<AtomicBool>, mut on_change: impl FnMut(&HeadsetState)) {
                 match d.dev.read(&mut buf) {
                     Ok(n) if n > 0 => {
                         any = true;
-                        if parse(&mut st, fam, &buf[..n]) { on_change(&st); }
+                        let raw = &buf[..n];
+                        let kind = if raw.len() > 1 && raw[0] == 0 { raw[1] } else { raw[0] };
+                        if kind == 0x45 { last_event = Some(Instant::now()); }
+                        let status_mix = last_event.map_or(true, |t| t.elapsed() > Duration::from_secs(3));
+                        if parse(&mut st, fam, raw, status_mix) { on_change(&st); }
                     }
                     Ok(_) => {}
                     Err(_) => { dead = true; }
@@ -179,25 +186,34 @@ mod tests {
     fn nova5x_from_real_log() {
         let mut s = st();
         // skutočné dáta z Alexovho Nova 5X
-        assert!(parse(&mut s, Family::Nova5, &[0x45, 0x64, 0x47, 0, 0, 0, 0, 0]));
+        assert!(parse(&mut s, Family::Nova5, &[0x45, 0x64, 0x47, 0, 0, 0, 0, 0], true));
         assert_eq!((s.game, s.chat), (100, 71));
         let status = [0xb0, 0x03, 0x02, 0x64, 0x03, 0x3e, 0x64, 0x30, 0x31];
-        assert!(parse(&mut s, Family::Nova5, &status));
+        assert!(parse(&mut s, Family::Nova5, &status, true));
         assert_eq!((s.game, s.chat, s.battery, s.connected), (62, 100, 100, true));
         // s report ID 0 na začiatku
-        assert!(parse(&mut s, Family::Nova5, &[0x00, 0x45, 0x64, 0x64, 0, 0]));
+        assert!(parse(&mut s, Family::Nova5, &[0x00, 0x45, 0x64, 0x64, 0, 0], true));
         assert_eq!((s.game, s.chat), (100, 100));
     }
 
     #[test]
     fn rejects_garbage() {
         let mut s = st();
-        parse(&mut s, Family::Nova5, &[0x45, 0x64, 0x64]);
+        parse(&mut s, Family::Nova5, &[0x45, 0x64, 0x64], true);
         // vypnuté slúchadlá: nuly nesmú stlmiť všetko
-        assert!(!parse(&mut s, Family::Nova5, &[0x45, 0x00, 0x00, 0]));
+        assert!(!parse(&mut s, Family::Nova5, &[0x45, 0x00, 0x00, 0], true));
         assert_eq!((s.game, s.chat), (100, 100));
-        parse(&mut s, Family::Nova5, &[0xb0, 0x02, 0, 0, 0, 0, 0]);
+        parse(&mut s, Family::Nova5, &[0xb0, 0x02, 0, 0, 0, 0, 0], true);
         assert!(!s.connected);
         assert_eq!((s.game, s.chat), (100, 100));
+    }
+
+    #[test]
+    fn stale_status_does_not_move_wheel() {
+        let mut s = st();
+        parse(&mut s, Family::Nova5, &[0x45, 0x64, 0x21, 0, 0], true);
+        // starší stav (chat 71) počas točenia nesmie vrátiť koliesko späť, batéria sa ale prečíta
+        parse(&mut s, Family::Nova5, &[0xb0, 0x03, 0x02, 0x40, 0x00, 0x64, 0x47], false);
+        assert_eq!((s.game, s.chat, s.battery), (100, 33, 64));
     }
 }

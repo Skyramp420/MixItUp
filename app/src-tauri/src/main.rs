@@ -5,6 +5,7 @@
 //   MixItUp.exe --engine   ChatMix na pozadí, bez okna a bez WebView (spúšťa sa pri štarte Windowsu)
 //   MixItUp.exe --stop     slušne ukončí engine (vráti hlasitosti)
 //   MixItUp.exe --uninstall  ukončí engine, vypne autoštart, vráti hlasitosti
+//   MixItUp.exe --overlay battery 15 low   krátky overlay navrchu (slabá batéria), sám sa zavrie
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio;
@@ -18,7 +19,7 @@ use serde::Serialize;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 use winreg::enums::*;
 use winreg::RegKey;
 
@@ -157,11 +158,56 @@ async fn reset_volumes() -> Result<usize, String> {
 }
 
 #[tauri::command]
+fn overlay_preview(pct: i32) -> Result<(), String> { engine::spawn_overlay(pct, pct <= 5) }
+
+#[tauri::command]
 fn headset_now(state: tauri::State<'_, HeadsetShared>) -> headset::HeadsetState {
     state.0.lock().map(|s| s.clone()).unwrap_or_default()
 }
 
 struct HeadsetShared(Arc<Mutex<headset::HeadsetState>>);
+
+// ------------------------------------------------------------------ overlay
+
+/// Malé okno navrchu (nad hrou v okne / bez okraja), neberie fokus, kliká sa cezň. Po pár sekundách sa zavrie.
+fn overlay(pct: i32, critical: bool) {
+    const W: f64 = 400.0;
+    const H: f64 = 110.0;
+    tauri::Builder::default()
+        .setup(move |app| {
+            let url = format!("overlay.html?pct={pct}&crit={}", critical as u8);
+            let w = tauri::WebviewWindowBuilder::new(app, "overlay", tauri::WebviewUrl::App(url.into()))
+                .title("MixItUp")
+                .inner_size(W, H)
+                .decorations(false)
+                .transparent(true)
+                .shadow(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .focused(false)
+                .visible(false)
+                .build()?;
+            let _ = w.set_ignore_cursor_events(true);
+            if let Ok(Some(m)) = w.primary_monitor() {
+                let sf = m.scale_factor();
+                let (mx, my) = (m.position().x as f64, m.position().y as f64);
+                let mw = m.size().width as f64;
+                let x = mx + (mw - W * sf) / 2.0;
+                let y = my + 28.0 * sf;
+                let _ = w.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
+            }
+            let _ = w.show();
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(7200));
+                handle.exit(0);
+            });
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .ok();
+}
 
 // ------------------------------------------------------------------ main
 
@@ -178,6 +224,13 @@ fn main() {
         engine::request_stop(Duration::from_secs(5));
         engine::restore_if_idle();
         if has("--uninstall") { let _ = autostart_write(false); }
+        return;
+    }
+
+    if let Some(i) = args.iter().position(|a| a.eq_ignore_ascii_case("--overlay")) {
+        let pct: i32 = args.get(i + 2).and_then(|v| v.parse().ok()).unwrap_or(15);
+        let critical = args.get(i + 3).map(|v| v == "critical").unwrap_or(false);
+        overlay(pct, critical);
         return;
     }
 
@@ -202,8 +255,9 @@ fn main() {
                     let _ = handle.emit("headset", st.clone());
                 });
             });
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_title("MixItUp");
+            let conf = app.config().app.windows.iter().find(|w| w.label == "main").cloned();
+            if let Some(conf) = conf {
+                tauri::WebviewWindowBuilder::from_config(app.handle(), &conf)?.build()?;
             }
             Ok(())
         })
@@ -219,6 +273,7 @@ fn main() {
             ss_sonar_devices,
             set_default_device,
             reset_volumes,
+            overlay_preview,
             headset_now,
             update::update_check,
             update::update_install,

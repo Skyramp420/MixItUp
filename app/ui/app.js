@@ -64,7 +64,7 @@ const avatar = a => h('span', { class: 'av', style: `--hue:${hue(a)}` }, pretty(
 
 // ------------------------------------------------------------------ náhľad v prehliadači (bez Tauri)
 const mock = {
-  cfg: { chat: ['discord', 'ms-teams', 'mumble', 'skype', 'slack', 'teams', 'teamspeak', 'telegram', 'ts3client_win64', 'vesktop', 'whatsapp', 'zoom'], ignore: [], swap: false, output_id: '', all_outputs: false, setup_done: !/wizard/.test(location.hash) },
+  cfg: { battery_alert: true, battery_alert_at: 15, chat: ['discord', 'ms-teams', 'mumble', 'skype', 'slack', 'teams', 'teamspeak', 'telegram', 'ts3client_win64', 'vesktop', 'whatsapp', 'zoom'], ignore: [], swap: false, output_id: '', all_outputs: false, setup_done: !/wizard/.test(location.hash) },
   engine: true, autostart: true, gg: true, ggStart: true, sonar: true, outSonar: true,
   endpoints() {
     const e = [
@@ -108,6 +108,7 @@ const invoke = IS_APP ? TAURI.core.invoke : async (cmd, a) => {
     case 'ss_sonar_devices': m.sonar = a.enabled; if (!a.enabled) m.outSonar = false; return;
     case 'set_default_device': if (a.id === 'e1') m.outSonar = false; return;
     case 'reset_volumes': return 5;
+    case 'overlay_preview': window.open('overlay.html?pct=' + a.pct, '_blank', 'width=420,height=130'); return;
     case 'update_check': return { current: '0.1.0', latest: '0.1.0', available: false, notes: '', url: '', page: '' };
   }
   return null;
@@ -562,6 +563,14 @@ function renderSettings() {
     row('Otočiť koliesko', 'Ak sa pri točení k chatu stišuje chat, zapni toto.',
       sw(() => c.swap, on => { c.swap = on; saveCfg(); paintHome(); }))));
 
+  v.append(h('h2', { class: 'sec' }, 'Batéria'), h('div', { class: 'card land', style: '--i:1' },
+    row('Upozorniť na slabú batériu', 'Navrchu obrazovky vyskočí malé upozornenie (aj nad hrou v okne alebo bez okraja). Druhé príde pri 5 %.',
+      sw(() => c.battery_alert, on => { c.battery_alert = on; saveCfg(); })),
+    row('Upozorniť pri', null,
+      segment([[25, '25 %'], [20, '20 %'], [15, '15 %'], [10, '10 %']], () => c.battery_alert_at, x => { c.battery_alert_at = x; saveCfg(); })),
+    row('Ukážka', 'Takto to bude vyzerať.',
+      h('button', { class: 'btn', onclick: async () => { try { await invoke('overlay_preview', { pct: c.battery_alert_at }); } catch (e) { toast(String(e), true); } } }, icon('sparkle'), 'Ukázať'))));
+
   v.append(h('h2', { class: 'sec' }, 'Hlasitosti'), h('div', { class: 'card land', style: '--i:1' },
     row('Vrátiť všetky aplikácie na 100 %', 'Keby niečo ostalo stíšené (napr. po prototype alebo páde). Platí pre všetky výstupy.',
       h('button', { class: 'btn danger', onclick: async () => {
@@ -641,8 +650,8 @@ function wizard() {
       body.append(h('div', { class: 'center' }, (() => { const s = phonesSvg(); s.style.width = '200px'; s.style.height = '160px'; return s; })(),
         h('h2', {}, 'ChatMix bez Sonaru'),
         h('p', { style: 'max-width:440px' }, 'Koliesko na slúchadlách bude stišovať hru alebo Discord priamo vo Windowse. Žiadne virtuálne zariadenia, žiadne ťažké GG na pozadí.'),
-        h('p', { style: 'max-width:440px;font-size:12px' }, 'Zaberie to minútku: nájdem slúchadlá, upracem SteelSeries a vyberieš si chat aplikácie.')));
-      foot.append(h('span', { class: 'sp' }), cfg().setup_done ? h('button', { class: 'btn', onclick: close }, 'Zavrieť') : null,
+        h('p', { style: 'max-width:440px;font-size:12px' }, 'Zaberie to minútku: nájdem slúchadlá, dám do poriadku SteelSeries a vyberieš si chat aplikácie.')));
+      foot.append(h('span', { class: 'sp' }), ...(cfg().setup_done ? [h('button', { class: 'btn', onclick: close }, 'Zavrieť')] : []),
         h('button', { class: 'btn primary', onclick: () => { step = 1; paint(); } }, 'Začať'));
     }
 
@@ -650,28 +659,35 @@ function wizard() {
       const box = h('div');
       body.append(h('h2', {}, 'Slúchadlá'), h('p', {}, 'Zapoj USB dongle a zapni slúchadlá. Potom skús otočiť kolieskom ChatMix.'), box);
       const next = h('button', { class: 'btn primary', onclick: () => { step = 2; paint(); loadSS().then(paintChecks); } }, 'Ďalej');
+      // postavené raz, pri pohybe kolieska sa len posúva knob (inak by skákal)
+      const searching = h('div', { class: 'found' }, h('span', { class: 'spinner' }),
+        h('div', {}, h('b', {}, 'Hľadám slúchadlá…'), h('small', {}, 'Podporované sú SteelSeries Arctis s kolieskom ChatMix (Nova 5, Nova 7, 7+…).')));
+      const fName = h('b'), fSub = h('small'), fBatt = h('span', { class: 'fbatt' });
+      const found = h('div', { class: 'found' }, h('div', { class: 'pi' }, icon('home')), h('div', {}, fName, fSub), fBatt);
+      const knob = h('i', { class: 'knob' });
+      const track = h('div', { class: 'track' }, h('span', { class: 'mid' }), knob, icon('chat'), icon('game'));
+      const hc = h('span'), hm = h('span'), hg = h('span');
+      const bal = h('div', { class: 'balance', style: 'margin-top:14px' }, track, h('div', { class: 'hint' }, hc, hm, hg));
+      box.append(searching, found, bal);
       const paintHs = () => {
         const hs = S.hs, m = mix();
-        box.innerHTML = '';
-        if (!hs.present) {
-          box.append(h('div', { class: 'found' }, h('span', { class: 'busy', style: 'width:22px;height:22px;border-radius:50%;border:2.5px solid var(--fill);border-top-color:var(--accent);animation:spin .9s linear infinite' }),
-            h('div', {}, h('b', {}, 'Hľadám slúchadlá…'), h('small', {}, 'Podporované sú SteelSeries Arctis s kolieskom ChatMix (Nova 5, Nova 7, 7+…).'))));
-          next.textContent = 'Pokračovať aj tak';
-          next.className = 'btn';
-          return;
-        }
-        next.textContent = 'Ďalej'; next.className = 'btn primary';
-        box.append(h('div', { class: 'found' }, h('div', { class: 'pi' }, icon('home')),
-          h('div', {}, h('b', {}, hs.product), h('small', {}, hs.connected ? 'Pripojené' : 'Dongle je zapojený, slúchadlá sú vypnuté')),
-          hs.connected ? battery(hs.battery, hs.charging) : null));
-        const knob = h('i', { class: 'knob' });
-        const track = h('div', { class: 'track' + (m ? '' : ' off') }, h('span', { class: 'mid' }), knob, icon('chat'), icon('game'));
-        box.append(h('div', { class: 'balance', style: 'margin-top:14px' }, track,
-          h('div', { class: 'hint' }, h('span', {}, m ? `chat ${m.chat} %` : 'chat'), h('span', {}, m ? 'Vidím koliesko ✓' : 'Otoč kolieskom…'), h('span', {}, m ? `hra ${m.game} %` : 'hra'))));
-        requestAnimationFrame(() => { const g = m ? m.game : 100, c = m ? m.chat : 100; knob.style.setProperty('--x', Math.round((g - c + 100) / 200 * Math.max(0, track.offsetWidth - 34)) + 'px'); });
+        searching.hidden = hs.present;
+        found.hidden = bal.hidden = !hs.present;
+        next.textContent = hs.present ? 'Ďalej' : 'Pokračovať aj tak';
+        next.className = hs.present ? 'btn primary' : 'btn';
+        if (!hs.present) return;
+        fName.textContent = hs.product;
+        fSub.textContent = hs.connected ? 'Pripojené' : 'Dongle je zapojený, slúchadlá sú vypnuté';
+        fBatt.replaceChildren(...(hs.connected && hs.battery >= 0 ? [battery(hs.battery, hs.charging)] : []));
+        track.classList.toggle('off', !m);
+        hc.textContent = m ? `chat ${m.chat} %` : 'chat';
+        hm.textContent = m ? 'Vidím koliesko ✓' : 'Otoč kolieskom…';
+        hg.textContent = m ? `hra ${m.game} %` : 'hra';
+        const g = m ? m.game : 100, c = m ? m.chat : 100;
+        knob.style.setProperty('--x', Math.round((g - c + 100) / 200 * Math.max(0, track.offsetWidth - 34)) + 'px');
       };
       S.wizHs = paintHs;
-      paintHs();
+      requestAnimationFrame(paintHs);
       foot.append(back, h('span', { class: 'sp' }), next);
     } else S.wizHs = null;
 

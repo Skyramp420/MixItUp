@@ -242,7 +242,7 @@ body.idle *{animation-play-state:paused!important}
 .side-read.dim .num{color:var(--faint)}
 .side-read .apps{color:var(--muted);font-size:12px;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lvl{width:150px;height:6px;border-radius:3px;background:var(--fill2);overflow:hidden;position:relative}
-.lvl i{position:absolute;inset:0;border-radius:3px;background:var(--accent);transform-origin:left;transform:scaleX(var(--v,1));transition:transform .45s var(--spring)}
+.lvl i{position:absolute;inset:0;border-radius:3px;background:var(--accent);transform-origin:left;transform:scaleX(var(--v,1));transition:transform .25s var(--ease)}
 .side-read.r .lvl i{transform-origin:right}
 .side-read.dim .lvl i{background:var(--faint)}
 
@@ -252,9 +252,9 @@ body.idle *{animation-play-state:paused!important}
 .phones .yoke{fill:none;stroke:var(--faint);stroke-width:4;stroke-linecap:round}
 .phones .cup{fill:var(--raise);stroke:var(--line);stroke-width:1}
 .phones .pad{fill:var(--raise2)}
-.phones .glow{fill:var(--accent);opacity:var(--o,.15);transition:opacity .4s var(--ease)}
+.phones .glow{fill:var(--accent);opacity:var(--o,.15);transition:opacity .25s var(--ease)}
 .phones .dialring{fill:var(--panel);stroke:var(--line);stroke-width:1}
-.phones .dial{transition:transform .5s var(--spring);transform-box:fill-box;transform-origin:center}
+.phones .dial{transition:transform .22s var(--ease);transform-box:fill-box;transform-origin:center}
 .phones .dial line{stroke:var(--accent);stroke-width:2.4;stroke-linecap:round}
 .phones .dial circle{fill:var(--raise2);stroke:none}
 .phones .wave{fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;opacity:0;transition:opacity .25s var(--ease)}
@@ -270,7 +270,7 @@ body.idle *{animation-play-state:paused!important}
 .track .mid{position:absolute;left:50%;top:9px;bottom:9px;width:1px;background:var(--line);transform:translateX(-50%)}
 .track .knob{position:absolute;top:4px;left:4px;width:26px;height:26px;border-radius:13px;background:var(--accent);
   box-shadow:0 1px 3px rgba(0,0,0,.3),0 0 0 4px color-mix(in srgb,var(--accent) 22%,transparent);
-  transform:translateX(var(--x,0));transition:transform .5s var(--spring),background .2s var(--ease)}
+  transform:translateX(var(--x,0));transition:transform .2s var(--ease),background .2s var(--ease)}
 .track.off .knob{background:var(--faint);box-shadow:0 1px 3px rgba(0,0,0,.3)}
 .balance .hint{display:flex;justify-content:space-between;margin-top:8px;font-size:11.5px;color:var(--faint)}
 
@@ -367,3 +367,7 @@ body.idle *{animation-play-state:paused!important}
 .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .grid2 .wide{grid-column:1/-1}
 @media (max-width:900px){.grid2{grid-template-columns:1fr}}
+
+.spinner{width:22px;height:22px;border-radius:50%;border:2.5px solid var(--fill);border-top-color:var(--accent);animation:spin .9s linear infinite;flex:none}
+.found[hidden],.balance[hidden]{display:none}
+.found .fbatt{margin-left:auto;color:var(--muted);font:500 12px var(--tc)}

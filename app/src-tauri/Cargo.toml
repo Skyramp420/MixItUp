@@ -1,6 +1,6 @@
 [package]
 name = "mixitup"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "MixItUp – ChatMix pre SteelSeries slúchadlá bez Sonaru (od WheresTheApp)"
 

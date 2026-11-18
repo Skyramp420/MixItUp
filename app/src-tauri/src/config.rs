@@ -22,6 +22,10 @@ pub struct Config {
     pub all_outputs: bool,
     /// sprievodca prvým spustením je hotový
     pub setup_done: bool,
+    /// ukázať overlay, keď sa slúchadlá vybíjajú
+    pub battery_alert: bool,
+    /// pri koľkých % upozorniť (druhé upozornenie príde vždy pri 5 %)
+    pub battery_alert_at: i32,
 }
 
 impl Default for Config {
@@ -33,6 +37,8 @@ impl Default for Config {
             output_id: String::new(),
             all_outputs: false,
             setup_done: false,
+            battery_alert: true,
+            battery_alert_at: 15,
         }
     }
 }

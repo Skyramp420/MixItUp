@@ -59,15 +59,18 @@ pub fn run() {
 
         audio::com_init();
 
-        // koliesko číta samostatné vlákno, sem len posiela poslednú polohu
+        // koliesko číta samostatné vlákno, sem len posiela posledný stav
         let wheel: Arc<Mutex<(i32, i32)>> = Arc::new(Mutex::new((-1, -1)));
+        let batt: Arc<Mutex<(i32, bool, bool)>> = Arc::new(Mutex::new((-1, false, false))); // %, nabíja, pripojené
         let stop = Arc::new(AtomicBool::new(false));
         {
             let wheel = wheel.clone();
+            let batt = batt.clone();
             let stop = stop.clone();
             std::thread::spawn(move || {
                 headset::run(stop, |st| {
                     if let Ok(mut w) = wheel.lock() { *w = (st.game, st.chat); }
+                    if let Ok(mut b) = batt.lock() { *b = (st.battery, st.charging, st.present && st.connected); }
                 });
             });
         }
@@ -79,6 +82,7 @@ pub fn run() {
         let mut last = (-2, -2);
         let mut last_scan = Instant::now() - Duration::from_secs(60);
         let mut last_names_clear = Instant::now();
+        let mut alerts = BatteryAlerts::default();
 
         loop {
             if WaitForSingleObject(stop_ev, 60) == WAIT_OBJECT_0 { break; }
@@ -93,6 +97,11 @@ pub fn run() {
             if last_names_clear.elapsed() > Duration::from_secs(120) {
                 names.clear();
                 last_names_clear = Instant::now();
+            }
+
+            let (pct, charging, connected) = *batt.lock().unwrap();
+            if let Some((p, critical)) = alerts.check(&cfg, pct, charging, connected) {
+                let _ = spawn_overlay(p, critical);
             }
 
             let (g, c) = *wheel.lock().unwrap();
@@ -131,4 +140,62 @@ pub fn restore_if_idle() {
     let ss = audio::sessions(&mut names);
     audio::restore(&ss, &mut j);
     j.save();
+}
+
+// ------------------------------------------------------------------ slabá batéria
+
+/// Kedy ukázať overlay: raz pri hranici z nastavení, ešte raz pri 5 %. Znova až po nabití.
+#[derive(Default)]
+pub struct BatteryAlerts {
+    /// najnižšia hranica, pri ktorej sme už upozornili
+    shown: Option<i32>,
+}
+
+impl BatteryAlerts {
+    pub fn check(&mut self, cfg: &config::Config, pct: i32, charging: bool, connected: bool) -> Option<(i32, bool)> {
+        if !connected || pct < 0 { return None; }
+        let at = cfg.battery_alert_at.clamp(5, 50);
+        if charging || pct > at + 3 {
+            self.shown = None;
+            return None;
+        }
+        if !cfg.battery_alert { return None; }
+        for th in [5, at] {
+            if pct <= th && self.shown.map_or(true, |s| th < s) {
+                self.shown = Some(th);
+                return Some((pct, th == 5 && at > 5));
+            }
+        }
+        None
+    }
+}
+
+/// Ukáže overlay ako samostatný krátky proces (WebView sa načíta len na tých pár sekúnd).
+pub fn spawn_overlay(pct: i32, critical: bool) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    std::process::Command::new(exe)
+        .args(["--overlay", "battery", &pct.to_string(), if critical { "critical" } else { "low" }])
+        .creation_flags(0x0000_0008)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn battery_alerts_once_per_threshold() {
+        let cfg = config::Config::default(); // 15 %
+        let mut a = BatteryAlerts::default();
+        assert_eq!(a.check(&cfg, 40, false, true), None);
+        assert_eq!(a.check(&cfg, 15, false, true), Some((15, false)));
+        assert_eq!(a.check(&cfg, 14, false, true), None);
+        assert_eq!(a.check(&cfg, 16, false, true), None); // šum okolo hranice
+        assert_eq!(a.check(&cfg, 5, false, true), Some((5, true)));
+        assert_eq!(a.check(&cfg, 3, false, true), None);
+        assert_eq!(a.check(&cfg, 3, true, true), None); // nabíja -> reset
+        assert_eq!(a.check(&cfg, 12, false, true), Some((12, false)));
+    }
 }
